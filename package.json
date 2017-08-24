@@ -10,6 +10,10 @@
     "queue": "~4.2.1",
     "request": "~2.81.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/slixin/nodeFix.git"
+  },
   "devDependencies": {},
   "scripts": {},
   "author": "Steve Li",
