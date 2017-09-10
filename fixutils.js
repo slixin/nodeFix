@@ -53,22 +53,6 @@ var checksum = exports.checksum = function(str) {
     return checksumstr;
 }
 
-var finalizeMessage = exports.finalizeMessage = function(version, msg, seq) {
-    var headermsg = msg.header;
-    var bodymsg = msg.body;
-
-    headermsg +="34="+seq.toString()+SOHCHAR;
-
-    var outmsg = "8="+version+SOHCHAR;
-    outmsg += "9="+(headermsg.length + bodymsg.length).toString()+SOHCHAR;
-    outmsg += headermsg;
-    outmsg += bodymsg;
-
-    outmsg += '10=' + checksum(outmsg) + SOHCHAR;
-
-    return outmsg;
-}
-
 var normalize = exports.normalize = function(jsonmessage, object) {
     for(key in jsonmessage) {
         if (jsonmessage.hasOwnProperty(key)) {

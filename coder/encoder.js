@@ -6,7 +6,8 @@ var convertToFix = exports.convertToFix = function(fixVersion, msgraw, spec) {
     var msg = {};
     var timeStamp = msgraw[52];
     var senderCompID = msgraw[49];
-    var targetCompID = msgraw[56]
+    var targetCompID = msgraw[56];
+    var outgoingSeqNum = msgraw[34];
 
     for (var tag in msgraw) {
         if (msgraw.hasOwnProperty(tag))
@@ -16,10 +17,17 @@ var convertToFix = exports.convertToFix = function(fixVersion, msgraw, spec) {
     delete msg['9']; //bodylength
     delete msg['10']; //checksum
 
-    var headermsg = encodeMsgHeader(msg[35], timeStamp, senderCompID, targetCompID);
+    var headermsg = encodeMsgHeader(msg[35], timeStamp, senderCompID, targetCompID, outgoingSeqNum);
     var bodymsg = encodeMsgBody(spec, msg);
 
-    return { header: headermsg, body: bodymsg };
+    var outmsg = "8="+fixVersion+SOHCHAR;
+    outmsg += "9="+(headermsg.length + bodymsg.length).toString()+SOHCHAR;
+    outmsg += headermsg;
+    outmsg += bodymsg;
+
+    outmsg += '10=' + checksum(outmsg) + SOHCHAR;
+
+    return outmsg;
 }
 
 var getMessageDefinition = function(dictionary, msgtype) {
@@ -30,7 +38,8 @@ var getMessageDefinition = function(dictionary, msgtype) {
 
     return null;
 }
-var checksum = exports.checksum = function(str) {
+
+var checksum = function(str) {
     var chksm = 0;
     for (var i = 0; i < str.length; i++) {
         chksm += str.charCodeAt(i);
@@ -69,7 +78,7 @@ var deepCopy = function(obj) {
 }
 
 // ################# Encode #########################
-var encodeMsgHeader = function(msgType, timeStamp, senderCompID, targetCompID) {
+var encodeMsgHeader = function(msgType, timeStamp, senderCompID, targetCompID, outgoingSeqNum) {
     var headermsgarr = [];
     headermsgarr.push('35=' + msgType, SOHCHAR);
     if (_.isNumber(timeStamp)) {
@@ -79,6 +88,7 @@ var encodeMsgHeader = function(msgType, timeStamp, senderCompID, targetCompID) {
     }
     headermsgarr.push('49=' + senderCompID, SOHCHAR);
     headermsgarr.push('56=' + targetCompID, SOHCHAR);
+    headermsgarr.push('34=' + outgoingSeqNum, SOHCHAR);
 
     var headermsg = headermsgarr.join('');
 

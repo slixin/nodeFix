@@ -9,22 +9,22 @@ module.exports = FixServerSession;
 /*==================================================*/
 /*====================FixServerSession====================*/
 /*==================================================*/
-function FixServerSession(fixVersion, opt, accs) {
+function FixServerSession(fixVersion, opt, account) {
     var self = this;
 
     self.fixVersion = fixVersion;
     self.options = opt == undefined ? {} : opt;
-    self.accounts = accs;
-    self.account = null;
+    self.account = account;
+    self.store = [];
 
     _.defaults(self.options, {
         shouldValidate: true,
         shouldSendHeartbeats: false,
         shouldExpectHeartbeats: true,
         shouldRespondToLogon: false,
-        defaultHeartbeatSeconds: 15,
-        incomingSeqNum: 0,
-        outgoingSeqNum: 0,
+        defaultHeartbeatSeconds: 30,
+        incomingSeqNum: 1,
+        outgoingSeqNum: 1,
         responseLogonExtensionTags: {},
         responseLogoutExtensionTags: {},
     });
@@ -49,20 +49,34 @@ function FixServerSession(fixVersion, opt, accs) {
 
     //[PUBLIC] Sends FIX json to counter party
     this.sendMsg = function(msg, callback) {
-        var header = self.buildHeader();
-        var outmsg = _.extend({}, msg, header);
-        self.emit('outmsg', { 'account': self.account, 'message': outmsg });
+        var header = null;
+        var outmsg = null;
+
+        if ('34' in msg) {
+            header = self.buildHeader(false);
+            outmsg = _.extend({}, msg, header);
+        } else {
+            header = self.buildHeader(true);
+            outmsg = _.extend({}, msg, header);
+            self.store.push(outmsg);
+            self.options.outgoingSeqNum = parseInt(self.options.outgoingSeqNum) + 1;
+        }
+        self.emit('outmsg', { 'account': self.account.targetID, 'message': outmsg });
         callback(outmsg);
     }
 
-    this.buildHeader = function() {
+    this.buildHeader = function(isnew) {
         self.options.timeOfLastOutgoing = new Date().getTime();
         var header = {
             8: self.fixVersion,
             49: self.targetCompID,
-            56: self.senderCompID,
-            52: fixutils.getCurrentUTCTimeStamp()
+            56: self.senderCompID
         };
+
+        if (isnew) {
+            header[34] = self.options.outgoingSeqNum.toString();
+            header[52] = fixutils.getCurrentUTCTimeStamp();
+        }
 
         return header
     }
@@ -73,7 +87,7 @@ function FixServerSession(fixVersion, opt, accs) {
         if (additional_tags != undefined) {
             if ('141' in additional_tags) {
                 if (additional_tags['141'] == 'Y')
-                    self.options.outgoingSeqNum = 0;
+                    self.options.outgoingSeqNum = 1;
             }
         }
         self.sendMsg(msgLogon, function(msg) {});
@@ -165,19 +179,20 @@ function FixServerSession(fixVersion, opt, accs) {
             if (self.options.shouldRespondToLogon === true) {
                 if ('141' in fix){
                     if (fix['141'] == 'Y') {
-                        self.options.incomingSeqNum = 0;
-                        self.options.outgoingSeqNum = 0;
+                        self.options.incomingSeqNum = 1;
+                        self.options.outgoingSeqNum = 1;
                         _.extend(msgLogon, { '141': 'Y' });
                     }
                 }
-                _.extend(msgLogon, { '108': fix[108] }, self.options.responseLogonExtensionTags);
-                if (self.options.outgoingSeqNum == 0) {
-                    _.extend(msgLogon, { '141': 'Y' });
+                if (self.options.outgoingSeqNum == 1) { // outgoingSeqNum is 1 means it is a new start of the server, reset SeqNum
+                    _.extend(msgLogon, { '108': fix[108], '141': 'Y' }, self.options.responseLogonExtensionTags);
+                } else {
+                    _.extend(msgLogon, { '108': fix[108] }, self.options.responseLogonExtensionTags);
                 }
                 self.sendMsg(msgLogon, function(msg) {});
             }
 
-            return okLogon;
+            return true;
         }
 
         var checkSequenceNumber = function(fix) {
@@ -236,6 +251,7 @@ function FixServerSession(fixVersion, opt, accs) {
 
 
         var msgType = fix['35'];
+        if (msgType == 'A') console.log(self.isLoggedIn);
         if (self.isLoggedIn === false) {
             // The first message must be A
             if (msgType !== 'A') {
@@ -246,26 +262,16 @@ function FixServerSession(fixVersion, opt, accs) {
                 return;
             }
 
-            var okLogon = false;
+            self.senderCompID = fix['49']
+            self.targetCompID = fix['56']
+            self.password = fix['554']
 
-            if (self.accounts.length > 0) {
-                self.senderCompID = fix['49']
-                self.targetCompID = fix['56']
-                self.password = fix['554']
-
-                self.accounts.forEach(function(acc) {
-                    if (acc.senderID == self.targetCompID && acc.targetID == self.senderCompID && acc.password == self.password) {
-                        okLogon = true;
-                        return;
-                    }
-                })
-            }
+            var okLogon = self.account.senderID == self.targetCompID && self.account.targetID == self.senderCompID && self.account.password == self.password;
 
             if (okLogon) {
-                self.account = self.senderCompID;
                 self.isLoggedIn = logon(fix);
                 if (!self.isLoggedIn) return;
-                self.emit('logon', { 'account': self.account, 'message': fix });
+                self.emit('logon', { 'account': self.account.targetID, 'message': fix });
                 self._sendState({ isLoggedIn: self.isLoggedIn });
                 self.options.incomingSeqNum = fix['34']
                 self._sendState({ incomingSeqNum: self.options.incomingSeqNum });
@@ -325,26 +331,37 @@ function FixServerSession(fixVersion, opt, accs) {
                 case '2': //send seq-reset with gap-fill Y
                     self.options.incomingSeqNum = fix['34']
                     self._sendState({ incomingSeqNum: self.options.incomingSeqNum });
-
-                    var msgSequenceReset = _.extend({}, self.standardMessage.SequenceReset, { '123': 'N','36': self.options.outgoingSeqNum+2 });
-                    self.sendMsg(msgSequenceReset, function(msg) {});
-
                     // ResendRequest message
-                    // if (self.store != undefined) {
-                    //     self.store.each(function(json) {
-                    //         var _msgType = json[35];
-                    //         var _seqNo = json[34];
-                    //         if (_.include(['A', '5', '2', '0', '1', '4'], _msgType)) {
-                    //             //send seq-reset with gap-fill Y
-                    //             var msgSequenceReset = _.extend({}, self.standardMessage.msgSequenceReset, { '123': 'Y','36': _seqNo });
-                    //             self.sendMsg(msgSequenceReset,  function(err, msg) {});
-                    //         } else {
-                    //             // Send possible duplicate message
-                    //             var msgDuplicated = _.extend({}, json, { '43': 'Y' });
-                    //             self.sendMsg(msgDuplicated,  function(err, msg) {});
-                    //         }
-                    //     });
-                    // }
+                    if (self.store.length > 0) {
+                        var beginSeqno = fix['7'];
+                        var endSeqno = fix['16'];
+                        var f_msgs = null;
+
+                        if (endSeqno == 0) {
+                            f_msgs = self.store.filter(function(o) { return parseInt(o[34]) >= parseInt(beginSeqno) });
+                        } else {
+                            f_msgs = self.store.filter(function(o) { return parseInt(o[34]) >= parseInt(beginSeqno) && parseInt(o[34]) <= parseInt(endSeqno) });
+                        }
+                        f_msgs.forEach(function(msg) {
+                            if (msg != undefined) {
+                                var _msgType = msg[35];
+                                var _seqNo = msg[34];
+
+                                if (_.include(['A', '5', '2', '0', '1', '4'], _msgType)) {
+                                    //send seq-reset with gap-fill Y
+                                    var msgSequenceReset = _.extend({}, self.standardMessage.SequenceReset, { '34': _seqNo, '123': 'Y', '36': parseInt(_seqNo)+1 });
+                                    self.sendMsg(msgSequenceReset,  function(err, msg) {});
+                                } else {
+                                    // Send possible duplicate message
+                                    var msgDuplicated = _.extend({}, msg, { '43': 'Y' });
+                                    self.sendMsg(msgDuplicated,  function(err, msg) {});
+                                }
+                            }
+                        });
+                    } else {
+                        var msgSequenceReset = _.extend({}, self.standardMessage.SequenceReset, { '123': 'N','36': self.options.outgoingSeqNum+1 });
+                        self.sendMsg(msgSequenceReset, function(msg) {});
+                    }
                     break;
                 case '5': // Logout Message
                     self.options.incomingSeqNum = fix['34']
@@ -356,7 +373,7 @@ function FixServerSession(fixVersion, opt, accs) {
                     self._endSession();
                     break;
                 default:
-                    self.emit('msg',  {'account': self.account, 'message': fix});
+                    self.emit('msg',  {'account': self.account.targetID, 'message': fix});
                     break;
             }
         }
@@ -364,7 +381,7 @@ function FixServerSession(fixVersion, opt, accs) {
 
     //internal methods (non-public)
     this._sendError = function(type, msg) {
-        self.emit('error', { 'account': self.account, 'message': msg });
+        self.emit('error', { 'account': self.account.targetID, 'message': msg });
         if (type === 'FATAL') {
             self._endSession();
         }
@@ -377,7 +394,7 @@ function FixServerSession(fixVersion, opt, accs) {
 
     this._endSession = function() {
         clearInterval(self.heartbeatIntervalID);
-        self.emit('endsession');
+        self.emit('endsession', self.account.targetID);
     }
 }
 util.inherits(FixServerSession, events.EventEmitter);
