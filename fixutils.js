@@ -25,6 +25,10 @@ var randomString = exports.randomString = function(seed, length){
     return text;
 }
 
+var randomDouble = exports.randomDouble = function(min, max) {
+    return Math.random() < 0.5 ? ((1-Math.random()) * (max-min) + min) : (Math.random() * (max-min) + min);
+}
+
 var getCurrentUTCTimeStamp = exports.getCurrentUTCTimeStamp = function(format) {
     return getUTCTimeStamp(moment().utc(), format == undefined ?  'YYYYMMDD-HH:mm:ss.SSS' : format);
 }
