@@ -112,21 +112,30 @@ var normalizeValue = exports.normalizeValue = function(value, object) {
         }
 
         if (wildcard.startsWith('randomdouble')) {
-            var min = wildcard.split(':')[1];
-            var max = wildcard.split(':')[2];
+            var wildcard_array = wildcard.split(':');
+
+            var min = wildcard_array[1];
+            var max = wildcard_array[2];
             var random_double = randomDouble(min, max);
             replace_value = replace_value.replace(re, random_double);
         }
 
         if (wildcard.startsWith('randomnumber')) {
-            var length = wildcard.split(':')[1];
+            var wildcard_array = wildcard.split(':');
+
+            var length = wildcard_array[1];
             var random_num = randomString('0123456789', length);
             replace_value = replace_value.replace(re, random_num);
         }
 
         if (wildcard.startsWith('randomstring')) {
-            var length = wildcard.split(':')[1];
-            var random_str = randomString(null, length);
+            var wildcard_array = wildcard.split(':');
+            var seed = null;
+            var length = wildcard_array[1];
+
+            if (wildcard_array.length > 1)
+                seed = wildcard_array[2];
+            var random_str = randomString(seed, length);
             replace_value = replace_value.replace(re, random_str);
         }
 

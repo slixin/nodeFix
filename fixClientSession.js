@@ -12,33 +12,34 @@ module.exports = FixClientSession;
 function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
     var self = this;
 
-    this.fixVersion = fixVersion;
-    this.senderCompID = senderCompID;
-    this.targetCompID = targetCompID;
-    this.options = opt == undefined ? {} : opt;
+    self.fixVersion = fixVersion;
+    self.senderCompID = senderCompID;
+    self.targetCompID = targetCompID;
+    self.options = opt == undefined ? {} : opt;
+    self.store = [];
 
     _.defaults(self.options, {
         shouldValidate: true,
         shouldSendHeartbeats: false,
         shouldExpectHeartbeats: true,
         shouldRespondToLogon: false,
-        defaultHeartbeatSeconds: 15,
-        incomingSeqNum: 0,
-        outgoingSeqNum: 0,
+        defaultHeartbeatSeconds: 30,
+        incomingSeqNum: 1,
+        outgoingSeqNum: 1,
         responseLogonExtensionTags: {},
         responseLogoutExtensionTags: {},
     });
 
-    this.heartbeatIntervalID = "";
+    self.heartbeatIntervalID = "";
 
-    this.isLoggedIn = false;
-    this.timeOfLastIncoming = new Date().getTime();
-    this.timeOfLastOutgoing = new Date().getTime();
-    this.testRequestID = 1;
-    this.isResendRequested = false;
-    this.isLogoutRequested = false;
+    self.isLoggedIn = false;
+    self.timeOfLastIncoming = new Date().getTime();
+    self.timeOfLastOutgoing = new Date().getTime();
+    self.testRequestID = 1;
+    self.isResendRequested = false;
+    self.isLogoutRequested = false;
 
-    this.standardMessage = {
+    self.standardMessage = {
         "Logoff": { 35: "5" },
         "Logon": { 35: "A", 98: '0' },
         "Heartbeat": { 35: '0' },
@@ -55,20 +56,34 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
 
     //[PUBLIC] Sends FIX json to counter party
     this.sendMsg = function(msg, callback) {
-        var header = self.buildHeader();
-        var outmsg = _.extend({}, msg, header);
+        var header = null;
+        var outmsg = null;
+
+        if ('34' in msg) {
+            header = self.buildHeader(false);
+            outmsg = _.extend({}, msg, header);
+        } else {
+            header = self.buildHeader(true);
+            outmsg = _.extend({}, msg, header);
+            self.store.push(outmsg);
+            self.options.outgoingSeqNum = parseInt(self.options.outgoingSeqNum) + 1;
+        }
         self.emit('outmsg', { 'message': outmsg });
         callback(outmsg);
     }
 
-    this.buildHeader = function() {
+    this.buildHeader = function(isnew) {
         self.options.timeOfLastOutgoing = new Date().getTime();
         var header = {
             8: self.fixVersion,
             49: self.senderCompID,
-            56: self.targetCompID,
-            52: fixutils.getCurrentUTCTimeStamp()
+            56: self.targetCompID
         };
+
+        if (isnew) {
+            header[34] = self.options.outgoingSeqNum.toString();
+            header[52] = fixutils.getCurrentUTCTimeStamp();
+        }
 
         return header
     }
@@ -79,7 +94,7 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
         if (additional_tags != undefined) {
             if ('141' in additional_tags) {
                 if (additional_tags['141'] == 'Y')
-                    self.options.outgoingSeqNum = 0;
+                    self.options.outgoingSeqNum = 1;
             }
         }
         self.sendMsg(msgLogon, function(msg) {});
@@ -171,14 +186,15 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
             if (self.options.shouldRespondToLogon === true) {
                 if ('141' in fix){
                     if (fix['141'] == 'Y') {
-                        self.options.incomingSeqNum = 0;
-                        self.options.outgoingSeqNum = 0;
+                        self.options.incomingSeqNum = 1;
+                        self.options.outgoingSeqNum = 1;
                         _.extend(msgLogon, { '141': 'Y' });
                     }
                 }
-                _.extend(msgLogon, { '108': fix[108] }, self.options.responseLogonExtensionTags);
-                if (self.options.outgoingSeqNum == 0) {
-                    _.extend(msgLogon, { '141': 'Y' });
+                if (self.options.outgoingSeqNum == 1) { // outgoingSeqNum is 1 means it is a new start of the client, reset SeqNum
+                    _.extend(msgLogon, { '108': fix[108], '141': 'Y' }, self.options.responseLogonExtensionTags);
+                } else {
+                    _.extend(msgLogon, { '108': fix[108] }, self.options.responseLogonExtensionTags);
                 }
                 self.sendMsg(msgLogon, function(msg) {});
             }
@@ -316,26 +332,37 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
                 case '2': //send seq-reset with gap-fill Y
                     self.options.incomingSeqNum = fix['34']
                     self._sendState({ incomingSeqNum: self.options.incomingSeqNum });
-
-                    var msgSequenceReset = _.extend({}, self.standardMessage.SequenceReset, { '123': 'N','36': self.options.outgoingSeqNum+2 });
-                    self.sendMsg(msgSequenceReset, function(msg) {});
-
                     // ResendRequest message
-                    // if (self.store != undefined) {
-                    //     self.store.each(function(json) {
-                    //         var _msgType = json[35];
-                    //         var _seqNo = json[34];
-                    //         if (_.include(['A', '5', '2', '0', '1', '4'], _msgType)) {
-                    //             //send seq-reset with gap-fill Y
-                    //             var msgSequenceReset = _.extend({}, self.standardMessage.msgSequenceReset, { '123': 'Y','36': _seqNo });
-                    //             self.sendMsg(msgSequenceReset,  function(err, msg) {});
-                    //         } else {
-                    //             // Send possible duplicate message
-                    //             var msgDuplicated = _.extend({}, json, { '43': 'Y' });
-                    //             self.sendMsg(msgDuplicated,  function(err, msg) {});
-                    //         }
-                    //     });
-                    // }
+                    if (self.store.length > 0) {
+                        var beginSeqno = fix['7'];
+                        var endSeqno = fix['16'];
+                        var f_msgs = null;
+
+                        if (endSeqno == 0) {
+                            f_msgs = self.store.filter(function(o) { return parseInt(o[34]) >= parseInt(beginSeqno) });
+                        } else {
+                            f_msgs = self.store.filter(function(o) { return parseInt(o[34]) >= parseInt(beginSeqno) && parseInt(o[34]) <= parseInt(endSeqno) });
+                        }
+                        f_msgs.forEach(function(msg) {
+                            if (msg != undefined) {
+                                var _msgType = msg[35];
+                                var _seqNo = msg[34];
+
+                                if (_.include(['A', '5', '2', '0', '1', '4'], _msgType)) {
+                                    //send seq-reset with gap-fill Y
+                                    var msgSequenceReset = _.extend({}, self.standardMessage.SequenceReset, { '34': _seqNo, '123': 'Y', '36': parseInt(_seqNo)+1 });
+                                    self.sendMsg(msgSequenceReset,  function(err, msg) {});
+                                } else {
+                                    // Send possible duplicate message
+                                    var msgDuplicated = _.extend({}, msg, { '43': 'Y' });
+                                    self.sendMsg(msgDuplicated,  function(err, msg) {});
+                                }
+                            }
+                        });
+                    } else {
+                        var msgSequenceReset = _.extend({}, self.standardMessage.SequenceReset, { '123': 'N','36': self.options.outgoingSeqNum+1 });
+                        self.sendMsg(msgSequenceReset, function(msg) {});
+                    }
                     break;
                 case '5': // Logout Message
                     self.options.incomingSeqNum = fix['34']

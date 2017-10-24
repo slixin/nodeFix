@@ -25,8 +25,6 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
     self.socket = null;
 
     var session = new FixClientSession(fixVersion, senderCompID, targetCompID, options);
-    var outMsgQueue = queue();
-    outMsgQueue.autostart = true;
     var fixCoder = new Coder(fixVersion, dictionary);
 
     var extractMsg = function(msg) {
@@ -113,6 +111,12 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
         });
 
         socket.on('end', function() {
+            if (session != undefined) {
+                session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
+                session.stopHeartBeat();
+                session.isLoggedIn = false;
+            }
+
             self.emit('disconnect');
         });
 
@@ -122,14 +126,13 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
 
         // Handle outbound message
         session.on('outmsg', function(msg) {
-            var out = fixCoder.encode(msg.message);
-
-            outMsgQueue.push(function(cb) {
-                session.options.outgoingSeqNum += 1;
-                var outmsg = fixutils.finalizeMessage(fixVersion, out, session.options.outgoingSeqNum);
-                socket.write(outmsg);
-                self.emit('outmsg', { message: msg.message });
-            });
+            var outmsg = fixCoder.encode(msg.message);
+            if (self.socket != undefined) {
+                self.socket.write(outmsg);
+                self.emit('outmsg', msg);
+            } else {
+                self.emit('error', {error: 'Socket is null.'});
+            }
         });
 
         // Inbound message Event
