@@ -57,16 +57,16 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
     this.sendMsg = function(msg, callback) {
         var header = self.buildHeader();
         var outmsg = _.extend({}, msg, header);
-        self.emit('outmsg', outmsg);
+        self.emit('outmsg', { 'message': outmsg });
         callback(outmsg);
     }
 
     this.buildHeader = function() {
         self.options.timeOfLastOutgoing = new Date().getTime();
         var header = {
-            8: fixVersion,
-            49: senderCompID,
-            56: targetCompID,
+            8: self.fixVersion,
+            49: self.senderCompID,
+            56: self.targetCompID,
             52: fixutils.getCurrentUTCTimeStamp()
         };
 
@@ -88,7 +88,8 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
     //[PUBLIC] Sends logoff FIX json to counter party
     this.sendLogoff = function(cb) {
         self.isLogoutRequested = true;
-        self.sendMsg(self.standardMessage.Logoff, function(msg) {});
+        var msgLogoff = _.extend({}, self.standardMessage.Logoff, self.options.responseLogoutExtensionTags);
+        self.sendMsg(msgLogoff, function(msg) {});
     }
 
     this.modifyBehavior = function(data) {
@@ -346,7 +347,7 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
                     self._endSession();
                     break;
                 default:
-                    self.emit('msg', fix);
+                    self.emit('msg', { 'message': fix });
                     break;
             }
         }
@@ -354,7 +355,7 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
 
     //internal methods (non-public)
     this._sendError = function(type, msg) {
-        self.emit('error', msg);
+        self.emit('error', {'message': msg });
         if (type === 'FATAL') {
             self._endSession();
         }

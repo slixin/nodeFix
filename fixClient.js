@@ -3,10 +3,11 @@ var net = require('net');
 var events = require('events');
 var fixutils = require('./fixutils.js');
 var FixClientSession = require('./fixClientSession.js');
-var FixClientSocket = require('./fixClientSocket.js');
 var FixDataProcessor = require('./fixDataProcessor.js');
 var Coder = require('./coder/index.js');
 var queue = require('queue');
+var dict = require('dict');
+var _ = require('underscore');
 
 module.exports = FixClient;
 
@@ -19,13 +20,14 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
 
     self.host = host;
     self.port = port;
+    self.options = options;
+    self.dictionary = dictionary;
+    self.socket = null;
 
     var session = new FixClientSession(fixVersion, senderCompID, targetCompID, options);
-    var fixSocket = new FixClientSocket();
     var outMsgQueue = queue();
     outMsgQueue.autostart = true;
-
-    var fixCoder = null;
+    var fixCoder = new Coder(fixVersion, dictionary);
 
     var extractMsg = function(msg) {
         var fields = [];
@@ -47,6 +49,16 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
         return { fields: fields, values: values }
     }
 
+    this.destroyConnection = function(){
+        if (self.socket != undefined){
+            self.socket.exit();
+        }
+    }
+
+    this.modifyBehavior = function(data) {
+        session.modifyBehavior(data);
+    }
+
     // Send Logon message
     this.sendLogon = function(additional_tags) {
         session.sendLogon(additional_tags);
@@ -57,17 +69,15 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
         session.sendLogoff(additional_tags);
     };
 
-    // Force disconnect
-    this.destroyConnection = function(){
-        if (self.socket != undefined){
-            self.socket.end();
-            self.cc.exit();
-        }
-    }
-
     // Send message
     this.sendMsg = function(msg, callback) {
-        var fixmsg = fixCoder.decode(msg);
+        var fixmsg = null;
+        if (typeof msg == "string") {
+            fixmsg = fixCoder.decode(msg);
+        } else {
+            fixmsg = JSON.parse(JSON.stringify(msg));
+        }
+
         var normalized_fixmsg = fixutils.normalize(fixmsg, null);
         session.sendMsg(normalized_fixmsg, function(outmsg) {
             callback(outmsg);
@@ -75,7 +85,10 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
     }
 
     this.createConnection = function(callback) {
-        fixCoder = new Coder(fixVersion, dictionary);
+        var socket = net.createConnection(port, host);
+        socket.setNoDelay(true);
+        self.socket = socket;
+
         var fixDataProcessor = new FixDataProcessor(fixVersion);
 
         // Handle Incoming Fix message Event
@@ -91,35 +104,32 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
             self.emit('error', error);
         });
 
-        // Build socket connection to Fix Server
-        fixSocket.connect(self.host, self.port, fixDataProcessor);
-
-        // Connected Event
-        fixSocket.on('connect', function() {
+        socket.on('connect', function() {
             self.emit('connect');
         });
 
-        // Disconnected Event
-        fixSocket.on('disconnect', function() {
-            session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
+        socket.on('data', function(data) {
+            fixDataProcessor.processData(data);
+        });
+
+        socket.on('end', function() {
             self.emit('disconnect');
         });
 
-        // Error Event
-        fixSocket.on('err', function(err) {
-            self.emit('err', err);
+        socket.on("error", function(err) {
+            self.emit('error', err);
         });
 
         // Handle outbound message
         session.on('outmsg', function(msg) {
-            var out = fixCoder.encode(msg);
+            var out = fixCoder.encode(msg.message);
 
             outMsgQueue.push(function(cb) {
                 session.options.outgoingSeqNum += 1;
                 var outmsg = fixutils.finalizeMessage(fixVersion, out, session.options.outgoingSeqNum);
-                fixSocket.send(outmsg);
-                self.emit('outmsg', outmsg);
-            })
+                socket.write(outmsg);
+                self.emit('outmsg', { message: msg.message });
+            });
         });
 
         // Inbound message Event
@@ -129,6 +139,9 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
 
         // Session end Event
         session.on('endsession', function() {
+            session.stopHeartBeat();
+            session.isLoggedIn = false;
+            session.modifyBehavior({ shouldSendHeartbeats: false, shouldExpectHeartbeats: false });
             self.emit('endsession');
         });
 
@@ -143,6 +156,12 @@ function FixClient(host, port, fixVersion, dictionary, senderCompID, targetCompI
         });
 
         callback(null, self);
+
+        process.on('uncaughtException', function(err) {
+            console.log('Caught exception: ' + err);
+            console.log(err.stack);
+        });
     }
 }
+
 util.inherits(FixClient, events.EventEmitter);
