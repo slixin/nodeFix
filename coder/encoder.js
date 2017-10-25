@@ -2,6 +2,10 @@ var _ = require('underscore');
 var moment = require('moment');
 var SOHCHAR = exports.SOHCHAR = String.fromCharCode(1);
 
+function byteCount(s) {
+    return encodeURI(s).split(/%..|./).length - 1;
+}
+
 var convertToFix = exports.convertToFix = function(fixVersion, msgraw, spec) {
     var msg = {};
     var timeStamp = msgraw[52];
@@ -21,7 +25,7 @@ var convertToFix = exports.convertToFix = function(fixVersion, msgraw, spec) {
     var bodymsg = encodeMsgBody(spec, msg);
 
     var outmsg = "8="+fixVersion+SOHCHAR;
-    outmsg += "9="+(headermsg.length + bodymsg.length).toString()+SOHCHAR;
+    outmsg += "9="+(byteCount(headermsg) + byteCount(bodymsg)).toString()+SOHCHAR;
     outmsg += headermsg;
     outmsg += bodymsg;
 
@@ -41,8 +45,9 @@ var getMessageDefinition = function(dictionary, msgtype) {
 
 var checksum = function(str) {
     var chksm = 0;
-    for (var i = 0; i < str.length; i++) {
-        chksm += str.charCodeAt(i);
+    var strBuffer = Buffer.from(str, 'utf8');
+    for (var i = 0; i < strBuffer.length; i++) {
+        chksm += strBuffer[i];
     }
 
     chksm = chksm % 256;
