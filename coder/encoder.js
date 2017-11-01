@@ -118,7 +118,7 @@ var encodeMsgBody = function(spec, msg) {
     }
 
     // if it is admin message
-    if (msgtype in admin_msg_types) {
+    if (admin_msg_types.indexOf(msgtype) >= 0) {
         for (var tag in msgraw) {
             if (msgraw.hasOwnProperty(tag)) {
                 bodymsgarr.push(tag, '=', msgraw[tag], SOHCHAR);

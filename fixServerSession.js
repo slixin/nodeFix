@@ -251,7 +251,7 @@ function FixServerSession(fixVersion, opt, account) {
 
 
         var msgType = fix['35'];
-        if (msgType == 'A') console.log(self.isLoggedIn);
+
         if (self.isLoggedIn === false) {
             // The first message must be A
             if (msgType !== 'A') {
