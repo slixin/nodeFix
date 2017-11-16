@@ -5,7 +5,6 @@ var fixutils = require('./fixutils.js');
 var FixClientSession = require('./fixClientSession.js');
 var FixDataProcessor = require('./fixDataProcessor.js');
 var Coder = require('./coder/index.js');
-var queue = require('queue');
 var dict = require('dict');
 var _ = require('underscore');
 
