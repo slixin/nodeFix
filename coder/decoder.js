@@ -50,7 +50,7 @@ var decodeMsgBody = function(dictionary, msgtype, tags, values) {
     }
     // Third, go through all fields in message definition
     if ('field' in msgDef) {
-        _.extend(map, decodeFields(msgDef.field, tags, values));
+        _.extend(map, decodeFields(msgDef.field, tags, values, false));
     }
     // Fourth, handling all fields in component of definiton, not includes group
     if ('component' in msgDef) {
@@ -99,8 +99,9 @@ var decodeGroup = function(group, tags, values) {
                 if ('component' in gp) {
                     _.extend(group_item, decodeComponentGroups(gp.component, tags, values));
                 }
+
                 // handling fields in group
-                _.extend(group_item, decodeFields(gp.field, tags, values));
+                _.extend(group_item, decodeFields(gp.field, tags, values, true));
 
                 // Push the sub-item into group
                 map[group_num].push(group_item);
@@ -138,21 +139,34 @@ var decodeComponentGroups = function(component, tags, values) {
 
         // handling fields in group
         if ('field' in comp) {
-            _.extend(map, decodeFields(comp.field, tags, values));
+            _.extend(map, decodeFields(comp.field, tags, values, false));
         }
     });
 
     return map;
 }
 
-var decodeFields = function(fields, tags, values) {
+var decodeFields = function(fields, tags, values, isgroup) {
     var map = {}
+    if (!isgroup) {
+        // Go through all fields definition
+        if (Array.isArray(fields)) {
+            var index = 0;
+            fields.forEach(function(field) {
+                // Find out the field which exists in incoming message and convert to map.
+                var field_num = field._number;
+                var field_tag_index = tags.findIndex(x => x == field_num);
+                if (field_tag_index >= 0) {
+                    map[field_num] = values[field_tag_index];
+                    // Remove the mapped field in tags and values array
+                    delete tags[field_tag_index];
+                    delete values[field_tag_index];
+                }
 
-    // Go through all fields definition
-    if (Array.isArray(fields)) {
-        fields.forEach(function(field) {
-            // Find out the field which exists in incoming message and convert to map.
-            var field_num = field._number;
+                index++;
+            });
+        } else {
+            var field_num = fields._number;
             var field_tag_index = tags.findIndex(x => x == field_num);
             if (field_tag_index >= 0) {
                 map[field_num] = values[field_tag_index];
@@ -160,17 +174,41 @@ var decodeFields = function(fields, tags, values) {
                 delete tags[field_tag_index];
                 delete values[field_tag_index];
             }
-        });
+        }
     } else {
-        var field_num = fields._number;
-        var field_tag_index = tags.findIndex(x => x == field_num);
-        if (field_tag_index >= 0) {
-            map[field_num] = values[field_tag_index];
-            // Remove the mapped field in tags and values array
-            delete tags[field_tag_index];
-            delete values[field_tag_index];
+        // Go through all fields definition
+        var field_count = fields.length;
+        if (Array.isArray(fields)) {
+            var index = 0;
+            var first_tag_index = 0;
+            fields.forEach(function(field) {
+                // Find out the field which exists in incoming message and convert to map.
+                var field_num = field._number;
+                var field_tag_index = tags.findIndex(x => x == field_num);
+                if (index == 0)
+                    first_tag_index = field_tag_index;
+
+                if (field_tag_index >= 0 && field_tag_index < first_tag_index + field_count) {
+                    map[field_num] = values[field_tag_index];
+                    // Remove the mapped field in tags and values array
+                    delete tags[field_tag_index];
+                    delete values[field_tag_index];
+                }
+
+                index++;
+            });
+        } else {
+            var field_num = fields._number;
+            var field_tag_index = tags.findIndex(x => x == field_num);
+            if (field_tag_index >= 0) {
+                map[field_num] = values[field_tag_index];
+                // Remove the mapped field in tags and values array
+                delete tags[field_tag_index];
+                delete values[field_tag_index];
+            }
         }
     }
+
 
     return map;
 }
@@ -188,7 +226,7 @@ var decodeComponentFields = function(component, tags, values) {
     // Go through all components which with Group in definition
     deComponents.forEach(function(comp) {
         if ('field' in comp) {
-            _.extend(map, decodeFields(comp.field, tags, values));
+            _.extend(map, decodeFields(comp.field, tags, values, false));
         }
 
         if ('component' in comp) {

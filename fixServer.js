@@ -159,7 +159,7 @@ function FixServer(port, fixVersion, dictionary, options, accounts) {
                 if (account != undefined) {
                     if (self.clients.has(account)) {
                         var client = self.clients.get(account);
-                        var session = client.session
+                        var session = client.session;
                         client.socket = socket;
                         // Process incoming Fix message in Session
                         session.processIncomingMsg(fix);
