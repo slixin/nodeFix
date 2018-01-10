@@ -83,6 +83,8 @@ function FixClientSession(fixVersion, senderCompID, targetCompID, opt) {
         if (isnew) {
             header[34] = self.options.outgoingSeqNum.toString();
             header[52] = fixutils.getCurrentUTCTimeStamp();
+        } else {
+            header[52] = fixutils.getCurrentUTCTimeStamp();
         }
 
         return header
